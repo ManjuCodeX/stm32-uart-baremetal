@@ -1,15 +1,20 @@
 /*
- * Bare-metal UART (TX + RX) Echo Example
- * Target  : STM32F407
- * UART    : USART2
- * Pins    : PA2 (TX), PA3 (RX)
- * Baud    : 9600 (HSI 16 MHz default clock)
+ * STM32F407 Bare-Metal UART Interrupt Example
+ * USART2 | TX: PA2 | RX: PA3
+ * Baud: 9600 (HSI 16 MHz default)
+ *
+ * Features:
+ * - RX interrupt
+ * - TX interrupt
+ * - Echo typed characters
+ * - ENTER -> new line
+ * - BACKSPACE -> delete last character
  */
 
 #include <stdint.h>
 
 /* =========================================================
-   Peripheral base addresses
+   BASE ADDRESSES
    ========================================================= */
 #define PERIPH_BASE        0x40000000UL
 #define AHB1PERIPH_BASE    0x40020000UL
@@ -41,98 +46,141 @@
 #define USART2_BRR         (*(volatile uint32_t *)(USART2_BASE + 0x08))
 #define USART2_CR1         (*(volatile uint32_t *)(USART2_BASE + 0x0C))
 
-/* USART control bits */
+/* CR1 bits */
 #define USART_CR1_UE       (1U << 13)
 #define USART_CR1_TE       (1U << 3)
 #define USART_CR1_RE       (1U << 2)
+#define USART_CR1_RXNEIE   (1U << 5)
+#define USART_CR1_TXEIE    (1U << 7)
 
-/* USART status bits */
-#define USART_SR_TXE       (1U << 7)
+/* SR bits */
 #define USART_SR_RXNE      (1U << 5)
+#define USART_SR_TXE       (1U << 7)
 
 /* =========================================================
-   Delay (crude, CPU blocking)
+   NVIC
    ========================================================= */
-static void delay(void)
-{
-    for (volatile uint32_t i = 0; i < 50000; i++);
-}
+#define NVIC_ISER1         (*(volatile uint32_t *)0xE000E104UL)
+#define USART2_IRQn       38
 
 /* =========================================================
-   USART2 Initialization
+   ASCII CODES
    ========================================================= */
-static void uart2_init(void)
+#define ASCII_ENTER        '\r'
+#define ASCII_BACKSPACE   0x08
+#define ASCII_DELETE      0x7F
+
+/* =========================================================
+   BUFFERS
+   ========================================================= */
+#define RX_BUF_SIZE 64
+
+volatile char rx_buffer[RX_BUF_SIZE];
+volatile uint8_t rx_index = 0;
+
+volatile char tx_buffer[3];
+volatile uint8_t tx_len = 0;
+volatile uint8_t tx_pos = 0;
+
+/* =========================================================
+   UART INIT
+   ========================================================= */
+void uart2_init(void)
 {
-    /* Enable clocks */
     RCC_AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
     RCC_APB1ENR |= RCC_APB1ENR_USART2EN;
 
-    /* PA2, PA3 -> Alternate Function mode */
+    /* PA2, PA3 AF mode */
     GPIOA_MODER &= ~(3U << (2 * 2));
-    GPIOA_MODER |=  (2U << (2 * 2));   // PA2 AF
+    GPIOA_MODER |=  (2U << (2 * 2));
 
     GPIOA_MODER &= ~(3U << (2 * 3));
-    GPIOA_MODER |=  (2U << (2 * 3));   // PA3 AF
+    GPIOA_MODER |=  (2U << (2 * 3));
 
-    /* AF7 (USART2) for PA2, PA3 */
+    /* AF7 for USART2 */
     GPIOA_AFRL &= ~(0xFU << (4 * 2));
-    GPIOA_AFRL |=  (7U  << (4 * 2));
+    GPIOA_AFRL |=  (7U << (4 * 2));
 
     GPIOA_AFRL &= ~(0xFU << (4 * 3));
-    GPIOA_AFRL |=  (7U  << (4 * 3));
+    GPIOA_AFRL |=  (7U << (4 * 3));
 
-    /* Baud rate: 9600 @ 16 MHz (HSI default) */
+    /* 9600 baud @ 16 MHz */
     USART2_BRR = 0x068B;
 
-    /* Enable TX and RX */
     USART2_CR1 |= USART_CR1_TE | USART_CR1_RE;
-
-    /* Enable USART */
+    USART2_CR1 |= USART_CR1_RXNEIE;
     USART2_CR1 |= USART_CR1_UE;
+
+    NVIC_ISER1 |= (1U << (USART2_IRQn - 32));
 }
 
 /* =========================================================
-   UART transmit / receive
+   USART2 INTERRUPT HANDLER
    ========================================================= */
-static void uart2_send_char(char c)
+void USART2_IRQHandler(void)
 {
-    while (!(USART2_SR & USART_SR_TXE));
-    USART2_DR = (uint32_t)c;
-}
-
-static char uart2_recv_char(void)
-{
-    while (!(USART2_SR & USART_SR_RXNE));
-    return (char)USART2_DR;
-}
-
-static void uart2_send_string(const char *str)
-{
-    while (*str)
+    /* RX interrupt */
+    if (USART2_SR & USART_SR_RXNE)
     {
-        uart2_send_char(*str++);
+        char c = (char)USART2_DR;
+
+        if (c == ASCII_ENTER)
+        {
+            rx_buffer[rx_index] = '\0';
+            rx_index = 0;
+
+            tx_buffer[0] = '\r';
+            tx_buffer[1] = '\n';
+            tx_len = 2;
+            tx_pos = 0;
+
+            USART2_CR1 |= USART_CR1_TXEIE;
+        }
+        else if ((c == ASCII_BACKSPACE || c == ASCII_DELETE) && rx_index > 0)
+        {
+            rx_index--;
+
+            tx_buffer[0] = '\b';
+            tx_buffer[1] = ' ';
+            tx_buffer[2] = '\b';
+            tx_len = 3;
+            tx_pos = 0;
+
+            USART2_CR1 |= USART_CR1_TXEIE;
+        }
+        else if (rx_index < RX_BUF_SIZE - 1)
+        {
+            rx_buffer[rx_index++] = c;
+
+            tx_buffer[0] = c;
+            tx_len = 1;
+            tx_pos = 0;
+
+            USART2_CR1 |= USART_CR1_TXEIE;
+        }
+    }
+
+    /* TX interrupt */
+    if ((USART2_SR & USART_SR_TXE) && (tx_pos < tx_len))
+    {
+        USART2_DR = tx_buffer[tx_pos++];
+        if (tx_pos >= tx_len)
+        {
+            USART2_CR1 &= ~USART_CR1_TXEIE;
+        }
     }
 }
 
 /* =========================================================
-   Main: UART Echo
+   MAIN
    ========================================================= */
 int main(void)
 {
-    char ch;
-
     uart2_init();
-    uart2_send_string("UART Echo Ready\r\n");
 
     while (1)
     {
-        ch = uart2_recv_char();   // wait for input
-        uart2_send_char(ch);      // echo back
-
-        if (ch == '\r')
-        {
-            uart2_send_char('\n');
-        }
+        __asm__("nop");   // CPU idle
     }
 }
 

@@ -1,52 +1,46 @@
-# STM32F407 Bare-Metal UART (TX / RX Echo)
+# STM32F407 Bare-Metal UART (Interrupt-Based TX/RX)
 
-This repository contains a **bare-metal UART implementation** for the **STM32F407** microcontroller using **direct register access**.  
-No HAL, no CubeMX, no CMSIS drivers — only the **reference manual and registers**.
+This project demonstrates a **bare-metal UART driver** for the **STM32F407** using **direct register access** and **interrupts**.
 
-The project demonstrates **full-duplex UART communication** where data typed in a terminal is **received by the MCU and echoed back**.
+No HAL.  
+No CubeMX.  
+Only the reference manual and hardware registers.
 
 ---
 
 ## ✨ Features
 
-- Bare-metal (no HAL / CubeMX)
 - USART2 full-duplex (TX + RX)
-- Polling mode (blocking)
-- UART echo example
-- Simple and beginner-friendly
-- Tested with USB-to-UART + picocom
+- Interrupt-based UART (RXNE & TXE)
+- Echo characters typed in terminal
+- ENTER → moves to new line
+- BACKSPACE → deletes last character
+- Simple terminal-like behavior
+- Default clock (HSI 16 MHz)
 
 ---
 
-## 🧠 What You Will Learn
+## 🧠 What You Learn
 
 - STM32 memory-mapped registers
-- RCC clock enabling
-- GPIO alternate function configuration
+- GPIO alternate function setup
 - USART baud-rate calculation
-- TXE and RXNE flag handling
-- Full-duplex UART communication
-
----
-
-## 🧩 Hardware Requirements
-
-- STM32F407 board (any variant exposing PA2 / PA3)
-- USB-to-UART adapter (CP2102 / CH340 / FTDI)
-- Jumper wires
+- NVIC interrupt enabling
+- RXNE and TXE interrupt handling
+- Terminal input handling (CR/LF, backspace)
 
 ---
 
 ## 🔌 Hardware Connections
 
-| STM32 Pin | USB-UART Pin |
-|---------|-------------|
+| STM32F407 | USB-UART |
+|---------|----------|
 | PA2 (TX) | RX |
 | PA3 (RX) | TX |
 | GND | GND |
 
-⚠️ TX and RX must be crossed.  
-⚠️ Common GND is mandatory.
+⚠️ TX/RX must be crossed  
+⚠️ GND is mandatory
 
 ---
 
@@ -56,29 +50,17 @@ The project demonstrates **full-duplex UART communication** where data typed in 
 |--------|------|
 | USART | USART2 |
 | Baud rate | 9600 |
-| Clock source | HSI (16 MHz default) |
+| Clock | HSI 16 MHz (default) |
 | Data bits | 8 |
 | Parity | None |
 | Stop bits | 1 |
-| Flow control | None |
-
----
-
-## 🧪 How It Works
-
-1. MCU initializes GPIO and USART2
-2. USART runs at **9600 baud** using default **16 MHz HSI**
-3. Terminal sends characters
-4. MCU receives data using `RXNE` flag
-5. MCU sends data back using `TXE` flag
-6. Terminal displays echoed characters
 
 ---
 
 ## 🖥️ Terminal Setup
 
-### Using picocom (Linux)
+### picocom (Linux)
 
-
+```bash
 picocom -b 9600 --flow none /dev/ttyUSB0
 
